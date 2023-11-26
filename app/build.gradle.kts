@@ -24,7 +24,8 @@
 
         buildTypes {
             release {
-                isMinifyEnabled = false
+                isMinifyEnabled = true
+                isShrinkResources=true
                 proguardFiles(
                     getDefaultProguardFile("proguard-android-optimize.txt"),
                     "proguard-rules.pro"
@@ -107,6 +108,7 @@
         implementation("androidx.media:media:1.6.0")
 
         implementation("org.jetbrains.kotlinx:kotlinx-coroutines-guava:1.7.3")
+        implementation("com.google.accompanist:accompanist-permissions:0.30.1")
 
 
     }

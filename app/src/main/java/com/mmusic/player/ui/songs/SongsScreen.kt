@@ -1,9 +1,7 @@
 package com.mmusic.player.ui.songs
 
-import android.content.Intent
 import android.content.pm.PackageManager.PERMISSION_GRANTED
-import android.net.Uri
-import android.provider.Settings
+import android.os.Build
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -42,7 +40,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.window.Dialog
 import androidx.core.app.ActivityCompat.shouldShowRequestPermissionRationale
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -50,14 +47,19 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.media3.common.util.UnstableApi
+import com.google.accompanist.permissions.ExperimentalPermissionsApi
+import com.google.accompanist.permissions.isGranted
+import com.google.accompanist.permissions.rememberPermissionState
+import com.google.accompanist.permissions.shouldShowRationale
 import com.mmusic.player.MainActivity
 import com.mmusic.player.R
 import com.mmusic.player.components.CircularLoading
+import com.mmusic.player.components.PermissionDialog
 import com.mmusic.player.components.SortingIconButton
 import com.mmusic.player.data.getReadAudioPermission
 import ir.kaaveh.sdpcompose.sdp
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalPermissionsApi::class)
 @UnstableApi
 @Composable
 fun SongsScreen(
@@ -67,32 +69,49 @@ fun SongsScreen(
 ) {
 
     val context = LocalContext.current
-    var dialogDeniedShow by remember {
+
+    val storagePermissionState = rememberPermissionState(permission = getReadAudioPermission)
+
+
+    var storageDialogDeniedShow by remember {
+        mutableStateOf(false)
+    }
+    var notificationDialogDeniedShow by remember {
         mutableStateOf(false)
     }
     var showSheet by remember {
         mutableStateOf(false)
     }
 
+
     val storagePermisissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
         onResult = {
             if (it) {
                 songViewModel.fetchSongs()
+            } else {
+                if (!storagePermissionState.status.shouldShowRationale) {
+                    Log.d("cvvrr", "Permanently denied")
+                    storageDialogDeniedShow = true
+                }
             }
-            else
-            {
+        }
+    )
+    val notificationPermisissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+        onResult = {
+            if (!it) {
                 if (!shouldShowRequestPermissionRationale(
                         context as MainActivity, getReadAudioPermission
                     )
                 ) {
-                    Log.d("cvvrr", "Permanently denied")
-                    dialogDeniedShow = true
+                    notificationDialogDeniedShow = true
                 }
             }
         }
     )
     val songState by songViewModel.songsState.collectAsState()
+
 
     DisposableEffect(key1 = lifecycleOwner, effect = {
         val observer = LifecycleEventObserver { _, event ->
@@ -102,7 +121,7 @@ fun SongsScreen(
                         getReadAudioPermission
                     ) == PERMISSION_GRANTED && !songViewModel.isFetching && songState.songs.isEmpty()
                 ) {
-                    Log.d("cvvrrr","fetching called")
+                    Log.d("cvvrrr", "fetching called")
                     songViewModel.fetchSongs()
                 }
             }
@@ -126,12 +145,7 @@ fun SongsScreen(
     Log.d("cvvr", "Recomposition SongsScreen called $showSheet")
 
 
-
-    if (ContextCompat.checkSelfPermission(
-            context,
-            getReadAudioPermission
-        ) != PERMISSION_GRANTED
-    ) {
+    if (!storagePermissionState.status.isGranted) {
         Column(
             modifier = Modifier.fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -143,46 +157,29 @@ fun SongsScreen(
             )
             Spacer(modifier = Modifier.height(8.sdp))
             Button(onClick = {
-
-                    storagePermisissionLauncher.launch(getReadAudioPermission)
+                storagePermisissionLauncher.launch(getReadAudioPermission)
             }) {
                 Text(text = "Request Permission")
             }
 
-            if (dialogDeniedShow) {
-                Dialog(onDismissRequest = {
-                    dialogDeniedShow = false
-                }) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(16.sdp))
-                            .background(Color.White)
-                            .padding(10.sdp)
-                    ) {
 
-                        Text(text = "You have Permanently denied storage permission . Please allow from settings")
-
-
-                        Spacer(modifier = Modifier.height(16.sdp))
-                        Button(onClick = {
-                            dialogDeniedShow = false
-                            Intent(
-                                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                                Uri.fromParts("package", context.packageName, null)
-                            ).also {
-                                context.startActivity(it)
-                            }
-                        }) {
-                            Text(text = "Go To Settings")
-                        }
-
-                    }
-                }
-            }
         }
     }
+
+    if (storageDialogDeniedShow) {
+        PermissionDialog(text = "You have denied storage permission . Please allow from settings") {
+            storageDialogDeniedShow = false
+        }
+    }
+
+    if (notificationDialogDeniedShow) {
+        PermissionDialog(text = "You have denied notification permission . Please allow from settings") {
+            notificationDialogDeniedShow = false
+        }
+    }
+
+
+
     DisplaySongs(
         songsUiState = songState, sortClicked = {
             showSheet = true
@@ -191,10 +188,21 @@ fun SongsScreen(
         },
         songClicked = {
             Log.d("cvvrr", "song clicked")
-
-            songViewModel.playSongs(index = it, songState.songs) {
-                moveToPlayer()
-            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                if (ContextCompat.checkSelfPermission(
+                        context,
+                        android.Manifest.permission.POST_NOTIFICATIONS
+                    ) != PERMISSION_GRANTED
+                ) {
+                    notificationPermisissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                } else
+                    songViewModel.playSongs(index = it, songState.songs) {
+                        moveToPlayer()
+                    }
+            } else
+                songViewModel.playSongs(index = it, songState.songs) {
+                    moveToPlayer()
+                }
 
         })
 }
